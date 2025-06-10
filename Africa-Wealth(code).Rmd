@@ -1,0 +1,489 @@
+---
+title: "ML exam"
+output: html_document
+date: "2025-05-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(tidyclust)
+library(corrplot)
+library(Rtsne)
+library(embed)
+library(tidytext)
+```
+
+```{r}
+wealth<-read.csv(choose.files())
+glimpse(wealth)
+```
+1)-EDA
+```{r}
+summary(wealth)
+```
+```{r}
+cat_vars <- wealth %>%
+  select(where(is.character), where(is.factor)) %>%
+  mutate(across(everything(), as.character))  
+
+cat_vars %>%
+  select(-ID) %>% 
+  pivot_longer(cols = everything()) %>%
+  ggplot(aes(x = value, fill = value)) +
+  facet_wrap(~name, scales = "free", ncol = 3) +
+  geom_bar() +  
+  coord_flip() +
+  theme_minimal() +
+  scale_fill_viridis_d()  
+```
+```{r}
+numeric_features <- wealth %>%
+  select(where(is.numeric))
+
+numeric_features %>%
+  pivot_longer(cols = everything()) %>%
+  ggplot(aes(x = value)) +  # Use value on x-axis for distribution
+  geom_histogram(binwidth = 10, fill = "lightgreen", color = "black") +  # Histogram with customizable binwidth
+  theme_minimal() +
+  facet_wrap(~ name, scales = "free") +  # Separate by variable with free scales
+  labs(title = "Distribution of Numeric Variables", x = "Value", y = "Count")
+```
+2)- EDA multuvariee 
+
+```{r}
+cor_matrix <- cor(numeric_features)
+corrplot(cor_matrix, method = "color", type = "full", tl.col = "black", tl.srt = 45)
+
+
+```
+```{r}
+wealth %>%
+  ggplot(aes(x = Target, color = country, fill = country)) +
+  geom_density(alpha = 0.4) +  
+  theme_minimal() +
+  labs(title = "Density Plot of Target by Country",
+       x = "Target",
+       y = "Density") 
+```
+```{r}
+wealth %>%
+  ggplot(aes(x = Target, color = country, fill = country)) +
+  geom_boxplot() +  
+  theme_minimal() +
+  labs(title = "Density Plot of Target by Country",
+       x = "Target",
+       y = "Density")
+
+```
+```{r}
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Calculate the mean Target by year (already done in your code)
+wealth_mean <- wealth %>%
+  group_by(year) %>%
+  summarise(mean_target = mean(Target, na.rm = TRUE))  # Added na.rm = TRUE to handle missing values
+
+# Create a time series line plot
+wealth_mean %>%
+  ggplot(aes(x = as.numeric(year), y = mean_target)) +
+  geom_line(color = "red", size = 1) +  # Line plot for time series
+  geom_point(color = "red", size = 2) +  # Add points for each year
+  theme_minimal() +
+  labs(title = "Average Target Over Years",
+       x = "Year",
+       y = "Average Target")
+```
+2)-unsupervised learning 
+_acp
+
+
+```{r}
+pca_features<-wealth %>% select(-c(Target,ID,urban_or_rural))
+pca_rec <- recipe(~., data = pca_features) %>%
+  update_role(country,new_role = 'id') %>% 
+ step_normalize(all_predictors()) %>%
+ step_pca(all_predictors())
+pca_prep <- prep(pca_rec)
+pca_prep
+tidy(pca_prep, 1)
+tidied_pca <- tidy(pca_prep, 2)
+tidied_pca
+tidied_pca %>%
+filter(
+component == "PC1" |
+component == "PC2" |
+component == "PC3" |
+component == "PC4"
+) %>%
+mutate(component = fct_inorder(component)) %>%
+ggplot(aes(value, terms, fill = terms)) +
+geom_col(show.legend = FALSE) +
+facet_wrap(~component, nrow = 1) +
+labs(y = NULL) +
+theme_bw()
+tidied_pca %>%
+filter(component %in% paste0("PC", 1:2)) %>%
+group_by(component) %>%
+top_n(8, abs(value)) %>%
+ungroup() %>%
+mutate(terms = reorder_within(terms, abs(value), component)) %>%
+ggplot(aes(abs(value), terms, fill = value > 0)) +
+geom_col() +
+facet_wrap(~component, scales = "free_y") +
+scale_y_reordered() +
+labs(
+x = "Absolute value of contribution",
+y = NULL, fill = "Positive?"
+)
+install.packages("ggrepel")
+library(ggrepel)
+juice(pca_prep) |>
+  ggplot(aes(PC1, PC2)) +
+  geom_point(aes(color = country), alpha = 0.7, size = 2) +
+  ggrepel::geom_text_repel(
+    aes(label = ""),  # Empty labels
+    max.overlaps = 40,
+    size = 3
+  ) +
+  labs(color = "Country") +
+  theme_bw()
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(Rtsne)
+
+# Select numeric features from the wealth dataset (excluding Target and country)
+numeric_features <- wealth %>%
+  select(where(is.numeric)) %>%
+  select(-Target)  # Adjust based on your needs
+
+
+# Remove duplicate rows from numeric_features
+numeric_features <- numeric_features[!duplicated(numeric_features), ]
+
+# Scale the cleaned numeric features
+numeric_features <- scale(numeric_features)
+
+# Subset the country column to match the rows after removing NAs and duplicates
+# We need to track which rows remain after cleaning
+original_indices <- which(complete.cases(wealth %>% select(where(is.numeric)) %>% select(-Target)) & 
+                         !duplicated(wealth %>% select(where(is.numeric)) %>% select(-Target)))
+country_clean <- wealth$country[original_indices]
+
+# Perform t-SNE
+set.seed(42)  # For reproducibility
+tsne_result <- Rtsne(numeric_features, dims = 2, perplexity = 20, verbose = TRUE)
+
+# Combine t-SNE results with country information
+tsne_data <- data.frame(
+  TSNE1 = tsne_result$Y[, 1],
+  TSNE2 = tsne_result$Y[, 2],
+  country = country_clean  # Use the aligned country data
+)
+
+# Create the t-SNE embedding plot
+ggplot(tsne_data, aes(x = TSNE1, y = TSNE2, color = country)) +
+  geom_point(alpha = 0.6, size = 2) +
+  theme_minimal() +
+  labs(title = "t-SNE Embedding of Wealth Data by Country",
+       x = "t-SNE 1",
+       y = "t-SNE 2",
+       color = "Country") +
+  scale_color_viridis_d()
+```
+```{r}
+
+
+
+
+# Define the recipe (without PCA, just normalization for UMAP)
+umap_rec <- recipe(~ ., data = pca_features) %>%
+  update_role(country, new_role = "id") %>%
+  step_normalize(all_predictors())
+
+# Prepare the recipe
+umap_prep <- prep(umap_rec)
+
+# Apply the preprocessing
+preprocessed_data <- juice(umap_prep)
+
+# Step 2: Perform UMAP
+# Extract numeric predictors (excluding the 'id' column, country)
+numeric_data <- preprocessed_data %>%
+  select(-country)
+
+# Run UMAP
+set.seed(42)
+umap_result <- umap(numeric_data, n_components = 2, n_neighbors = 15, min_dist = 0.1)
+
+# Combine UMAP results with country
+umap_data <- data.frame(
+  UMAP1 = umap_result[, 1],
+  UMAP2 = umap_result[, 2],
+  country = preprocessed_data$country
+)
+
+# Step 3: Create UMAP scatter plot (equivalent to PCA scatter plot)
+p_umap <- umap_data %>%
+  ggplot(aes(UMAP1, UMAP2)) +
+  geom_point(aes(color = country), alpha = 0.7, size = 2) +
+  ggrepel::geom_text_repel(
+    aes(label = ""),  # Empty labels as in your code
+    max.overlaps = 40,
+    size = 3
+  ) +
+  labs(color = "Country") +
+  theme_bw()
+
+# Display the plot
+print(p_umap)
+
+
+
+```
+K_means clustering 
+```{r}
+# 1. Create and fit the model WITH TIDYCLUST
+k_feutures<-wealth %>% select(-c(ID,Target,country,urban_or_rural))
+kmeans_spec <- k_means(num_clusters = 3) %>%
+  set_engine("stats") %>%
+  set_mode("partition")
+
+kmeans_rec <- recipe(~., data = k_feutures) %>%
+  step_normalize(all_predictors())
+
+kmeans_wf <- workflow() %>%
+  add_model(kmeans_spec) %>%
+  add_recipe(kmeans_rec)
+
+kmeans_fit <- fit(kmeans_wf, data = k_feutures)
+kmeans_fit %>% sse_ratio()
+# 2. Calculate silhouette score
+#silhouette_avg(kmeans_fit, new_data = k_feutures)
+```
+```{r}
+kmean_hc <- hier_clust(linkage_method = "ward.D2") %>%
+ set_mode("partition") %>%
+ set_engine("stats")
+ hec_wf<-workflow() %>% 
+   add_recipe(kmeans_rec) %>% 
+   add_model(kmean_hc)
+  wealth_fit <- kmean_hc %>% fit(formula = ~.,data = k_feutures)
+  wealth_fit %>% sse_ratio()
+  wealth_fit %>% extract_fit_engine() %>% plot(h =-1)
+ rect.hclust(wealth_fit %>% extract_fit_engine(),k = 3)
+
+```
+2)supervised learning 
+spliting data 
+
+```{r}
+train_wealth <- wealth %>% 
+  filter(!(country %in% c("Ghana", "Nigeria", "Kenya")))
+test_wealth<-wealth %>% 
+  filter((country %in% c("Ghana", "Nigeria", "Kenya")))
+glimpse(train_wealth)
+glimpse(test_wealth)
+```
+
+```{r}
+sup_recipe<-train_wealth %>% recipe(Target~.) %>% 
+  update_role(ID,new_role = "id") %>% 
+  step_corr(all_numeric_predictors(),threshold = 0.8) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
+sup_recipe %>% prep() %>% juice()
+```
+
+```{r}
+wl_crv<-train_wealth %>% vfold_cv(v=3,strata = Target)
+library(bonsai)
+# Define the LightGBM boosted tree model for regression
+light_spec <- boost_tree(
+  tree_depth = tune(),
+  min_n = tune(),
+  trees = tune()
+) %>%
+  set_mode("regression") %>%  # Change to regression mode
+  set_engine("lightgbm")
+
+# Create the workflow
+light_wf <- workflow() %>%
+  add_model(light_spec) %>%
+  add_recipe(sup_recipe)
+
+# Define the hyperparameter grid for tuning
+grid_rand <- grid_random(
+  trees(range = c(100, 600)),
+  tree_depth(range = c(3, 18)),  # Changed mtry to tree_depth (mtry is for random forests, not boosting)
+  min_n(range = c(20, 100)),
+  size = 5
+)
+
+# Define control object (assumed)
+ctrl <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+
+# Perform hyperparameter tuning with cross-validation
+rand_tune_res <- tune_grid(
+  light_wf,  # Corrected from random_wf to light_wf
+  resamples = wl_crv,
+  grid = grid_rand,
+  metrics = metric_set(rmse, mae, rsq),  # Regression metrics
+  control = ctrl
+)
+
+# Collect and display tuning results
+rand_tune_res %>% collect_metrics()
+
+# Select the best model based on RMSE (or another metric)
+rand_best <- rand_tune_res %>% select_best()
+
+# Finalize the workflow with the best parameters
+rand_final_wf <- finalize_workflow(
+  light_wf,
+  rand_best
+)
+
+# Fit the final model on the split data (los_split)
+random_final_fit <- rand_final_wf %>% fit(train_wealth)
+rand_res<-augment(random_final_fit,train_wealth)
+rand_res %>% metrics(truth = Target,estimate = .pred)
+random_final_fit <- rand_final_wf %>% fit(test_wealth)
+rand_res<-augment(random_final_fit,test_wealth)
+rand_res %>% metrics(truth = Target,estimate = .pred)
+
+```
+```{r}
+wealth2<-wealth %>% mutate(Target=if_else(Target>=0.5,"rich",'poor'))
+glimpse(wealth2)
+```
+```{r}
+target_dist <- wealth2 %>%
+  count(Target) %>%
+  mutate(Percentage = n / sum(n) * 100,
+         Label = paste0(round(Percentage, 1), "%"))
+
+# Create the bar plot
+ggplot(target_dist, aes(x = Target, y = Percentage, fill = Target)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = Label), vjust = -0.5, size = 4) +  # Add percentage labels above bars
+  labs(title = "Distribution of Target Variable",
+       x = "Target",
+       y = "Percentage (%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+```{r}
+wealth2<-wealth2 %>% mutate(Target=as.factor(Target))
+train_wealth <- wealth2 %>% 
+  filter(!(country %in% c("Ghana", "Nigeria", "Kenya")))
+test_wealth<-wealth2 %>% 
+  filter((country %in% c("Ghana", "Nigeria", "Kenya")))
+
+```
+
+```{r}
+library(themis)
+library(finetune)
+clas_rec<-train_wealth %>% recipe(Target~.) %>% 
+  update_role(ID,new_role = "id") %>% 
+  step_corr(all_numeric_predictors(),threshold = 0.8) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_novel(all_nominal_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_smote(Target,over_ratio = 1)
+clas_rec %>% prep() %>% juice()  
+```
+```{r}
+metric_cla<-metric_set(detection_prevalence,pr_auc)
+wl_crv<-train_wealth %>% vfold_cv(v=3,strata = Target)
+library(bonsai)
+# Define the LightGBM boosted tree model for regression
+light_spec <- boost_tree(
+  tree_depth = tune(),
+  min_n = tune(),
+  trees = tune()
+) %>%
+  set_mode("classification") %>%  # Change to regression mode
+  set_engine("lightgbm")
+
+# Create the workflow
+light_wf <- workflow() %>%
+  add_model(light_spec) %>%
+  add_recipe(clas_rec)
+
+# Define the hyperparameter grid for tuning
+grid_rand <- grid_random(
+  trees(range = c(100, 600)),
+  tree_depth(range = c(3, 18)),  # Changed mtry to tree_depth (mtry is for random forests, not boosting)
+  min_n(range = c(20, 100)),
+  size = 5
+)
+
+# Define control object (assumed)
+ctrl <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+
+# Perform hyperparameter tuning with cross-validation
+rand_tune_res <- tune_grid(
+  light_wf,  # Corrected from random_wf to light_wf
+  resamples = wl_crv,
+  grid = grid_rand,
+  metrics = metric_cla,  # Regression metrics
+  control = ctrl
+)
+
+# Collect and display tuning results
+rand_tune_res %>% collect_metrics()
+
+# Select the best model based on RMSE (or another metric)
+rand_best <- rand_tune_res %>% select_best()
+
+# Finalize the workflow with the best parameters
+rand_final_wf <- finalize_workflow(
+  light_wf,
+  rand_best
+)
+
+# Fit the final model on the split data (los_split)
+random_final_fit <- rand_final_wf %>% fit(train_wealth)
+rand_res<-augment(random_final_fit,train_wealth)
+rand_res %>% detection_prevalence(truth = Target,estimate = .pred_class)
+random_final_fit <- rand_final_wf %>% fit(test_wealth)
+rand_res<-augment(random_final_fit,test_wealth)
+rand_res %>% detection_prevalence(truth = Target,estimate = .pred_class)
+```
+
+
